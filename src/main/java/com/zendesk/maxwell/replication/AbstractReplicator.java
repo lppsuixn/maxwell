@@ -31,11 +31,15 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 	protected MaxwellFilter filter;
 
 	private final Counter rowCounter = MaxwellMetrics.metricRegistry.counter(
-		MetricRegistry.name(MaxwellMetrics.getMetricsPrefix(), "row", "count")
+			MetricRegistry.name(MaxwellMetrics.getMetricsPrefix(), "row", "count")
 	);
+	private final io.prometheus.client.Counter prometheusRowCounter =
+			io.prometheus.client.Counter.build(MaxwellMetrics.getMetricsPrefix().concat("_row").
+					concat("_count").replaceAll("\\s+", ""), MaxwellMetrics.getMetricsPrefix().concat("_row").concat("_count").replaceAll("\\s+", ""))
+					.register(MaxwellMetrics.prometheusRegistry);
 
 	private final Meter rowMeter = MaxwellMetrics.metricRegistry.meter(
-		MetricRegistry.name(MaxwellMetrics.getMetricsPrefix(), "row", "meter")
+			MetricRegistry.name(MaxwellMetrics.getMetricsPrefix(), "row", "meter")
 	);
 
 	protected Long replicationLag = 0L;
@@ -49,7 +53,7 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * Possibly convert a RowMap object into a HeartbeatRowMap
-	 *
+	 * <p>
 	 * Process a rowmap that represents a write to `maxwell`.`heartbeats`.
 	 * If it's a write for a different client_id, we return the input (which
 	 * will signify to the rest of the chain to ignore it).  Otherwise, we
@@ -60,7 +64,7 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 	 */
 	protected RowMap processHeartbeats(RowMap row) throws SQLException {
 		String hbClientID = (String) row.getData("client_id");
-		if ( !Objects.equals(hbClientID, this.clientID) )
+		if (!Objects.equals(hbClientID, this.clientID))
 			return row; // plain row -- do not process.
 
 		this.lastHeartbeatRead = (Long) row.getData("heartbeat");
@@ -71,11 +75,11 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 	/**
 	 * Parse a DDL statement and output the results to the producer
 	 *
-	 * @param dbName The database "context" under which the SQL is to be processed.  think "use db; alter table foo ..."
-	 * @param sql The DDL SQL to be processed
+	 * @param dbName      The database "context" under which the SQL is to be processed.  think "use db; alter table foo ..."
+	 * @param sql         The DDL SQL to be processed
 	 * @param schemaStore A SchemaStore object to which we delegate the parsing of the sql
-	 * @param position The position that the SQL happened at
-	 * @param timestamp The timestamp of the SQL binlog event
+	 * @param position    The position that the SQL happened at
+	 * @param timestamp   The timestamp of the SQL binlog event
 	 */
 	protected void processQueryEvent(String dbName, String sql, SchemaStore schemaStore, BinlogPosition position, Long timestamp) throws Exception {
 		List<ResolvedSchemaChange> changes = schemaStore.processSQL(sql, dbName, position);
@@ -96,24 +100,24 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * Should we output an event for the given database and table?
-	 *
+	 * <p>
 	 * Here we check against a whitelist/blacklist/filter.  The whitelist
 	 * passes updates to `maxwell.bootstrap` through (those are control
 	 * mechanisms for bootstrap), the blacklist gets rid of the
 	 * `ha_health_check` table which shows up erroneously in Alibaba RDS.
 	 *
 	 * @param database The database of the DML
-	 * @param table The table of the DML
-	 * @param filter A table-filter, or null
+	 * @param table    The table of the DML
+	 * @param filter   A table-filter, or null
 	 * @return Whether we should write the event to the producer
 	 */
 	protected boolean shouldOutputEvent(String database, String table, MaxwellFilter filter) {
 		Boolean isSystemWhitelisted = this.maxwellSchemaDatabaseName.equals(database)
-			&& "bootstrap".equals(table);
+				&& "bootstrap".equals(table);
 
-		if ( MaxwellFilter.isSystemBlacklisted(database, table) )
+		if (MaxwellFilter.isSystemBlacklisted(database, table))
 			return false;
-		else if ( isSystemWhitelisted)
+		else if (isSystemWhitelisted)
 			return true;
 		else
 			return MaxwellFilter.matches(filter, database, table);
@@ -121,8 +125,9 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * Get the last heartbeat that the replicator has processed.
-	 *
+	 * <p>
 	 * We pass along the value of the heartbeat to the producer inside the row map.
+	 *
 	 * @return the millisecond value ot the last heartbeat read
 	 */
 
@@ -132,7 +137,7 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * get a single row from the replicator and pass it to the producer or bootstrapper.
-	 *
+	 * <p>
 	 * This is the top-level function in the run-loop.
 	 */
 	public void work() throws Exception {
@@ -140,11 +145,12 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 		rowCounter.inc();
 		rowMeter.mark();
+		prometheusRowCounter.inc();
 
-		if ( row == null )
+		if (row == null)
 			return;
 
-		if ( row instanceof HeartbeatRowMap)
+		if (row instanceof HeartbeatRowMap)
 			producer.push(row);
 		else if (!bootstrapper.shouldSkip(row) && !isMaxwellRow(row))
 			producer.push(row);
@@ -154,8 +160,9 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * Is this RowMap an update to one of maxwell's own tables?
-	 *
+	 * <p>
 	 * If so we will often suppress the output.
+	 *
 	 * @param row The RowMap in question
 	 * @return whether the update is something maxwell itself generated
 	 */
@@ -165,7 +172,7 @@ public abstract class AbstractReplicator extends RunLoopProcess implements Repli
 
 	/**
 	 * The main entry point into the event reading loop.
-	 *
+	 * <p>
 	 * We maintain a buffer of events in a transaction,
 	 * and each subsequent call to `getRow` can grab one from
 	 * the buffer.  If that buffer is empty, we'll go check

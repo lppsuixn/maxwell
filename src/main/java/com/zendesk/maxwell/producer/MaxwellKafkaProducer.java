@@ -4,6 +4,7 @@ import com.codahale.metrics.Counter;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
+import com.zendesk.maxwell.Maxwell;
 import com.zendesk.maxwell.MaxwellContext;
 import com.zendesk.maxwell.metrics.MaxwellMetrics;
 import com.zendesk.maxwell.producer.partitioners.MaxwellKafkaPartitioner;
@@ -42,9 +43,13 @@ class KafkaCallback implements Callback {
 	private Meter succeededMessageMeter;
 	private Meter failedMessageMeter;
 
+	private io.prometheus.client.Counter succeededPrometheusMessageCount;
+	private io.prometheus.client.Counter failedPrometheusMessageCount;
+
 	public KafkaCallback(AbstractAsyncProducer.CallbackCompleter cc, BinlogPosition position, String key, String json,
 						 Timer timer, Counter producedMessageCount, Counter failedMessageCount, Meter producedMessageMeter,
-						Meter failedMessageMeter) {
+						 Meter failedMessageMeter, io.prometheus.client.Counter succeededPrometheusMessageCount,
+						 io.prometheus.client.Counter failedPrometheusMessageCount) {
 		this.cc = cc;
 		this.position = position;
 		this.key = key;
@@ -54,25 +59,32 @@ class KafkaCallback implements Callback {
 		this.failedMessageCount = failedMessageCount;
 		this.succeededMessageMeter = producedMessageMeter;
 		this.failedMessageMeter = failedMessageMeter;
+
+		this.succeededPrometheusMessageCount = succeededPrometheusMessageCount;
+		this.failedPrometheusMessageCount = failedPrometheusMessageCount;
+
 	}
+
 
 	@Override
 	public void onCompletion(RecordMetadata md, Exception e) {
-		if ( e != null ) {
+		if (e != null) {
 			this.failedMessageCount.inc();
 			this.failedMessageMeter.mark();
+			this.failedPrometheusMessageCount.inc();
 
 			LOGGER.error(e.getClass().getSimpleName() + " @ " + position + " -- " + key);
 			LOGGER.error(e.getLocalizedMessage());
-			if ( e instanceof RecordTooLargeException ) {
+			if (e instanceof RecordTooLargeException) {
 				LOGGER.error("Considering raising max.request.size broker-side.");
 			}
 		} else {
 			this.succeededMessageCount.inc();
 			this.succeededMessageMeter.mark();
+			this.succeededPrometheusMessageCount.inc();
 
-			if ( LOGGER.isDebugEnabled()) {
-				LOGGER.debug("->  key:" + key + ", partition:" +md.partition() + ", offset:" + md.offset());
+			if (LOGGER.isDebugEnabled()) {
+				LOGGER.debug("->  key:" + key + ", partition:" + md.partition() + ", offset:" + md.offset());
 				LOGGER.debug("   " + this.json);
 				LOGGER.debug("   " + position);
 				LOGGER.debug("");
@@ -128,11 +140,22 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	private final Counter failedMessageCount = MaxwellMetrics.metricRegistry.counter(failedMessageCountName);
 	private final Meter failedMessageMeter = MaxwellMetrics.metricRegistry.meter(failedMessageMeterName);
 
+	private final io.prometheus.client.Counter succeededMessagePrometheusCount =
+			io.prometheus.client.Counter.build(succeededMessageCountName.replaceAll("\\.", "_").replaceAll("\\s+", ""),
+					succeededMessageCountName.replaceAll("\\.", "_").replaceAll("\\s+", "")).register(MaxwellMetrics.prometheusRegistry);
+	//	private final io.prometheus.client.Counter succeededPrometheusMessageMeter =
+//			io.prometheus.client.Counter.build(succeededMessageMeterName, succeededMessageMeterName).register(MaxwellMetrics.prometheusRegistry);
+	private final io.prometheus.client.Counter failedPrometheusMessageCount =
+			io.prometheus.client.Counter.build(failedMessageCountName.replaceAll("\\.", "_").replaceAll("\\s+", "")
+					, failedMessageCountName.replaceAll("\\.", "_").replaceAll("\\s+", "")).register(MaxwellMetrics.prometheusRegistry);
+//	private final io.prometheus.client.Counter failedPrometheusMessageMeter =
+//			io.prometheus.client.Counter.build(failedMessageMeterName, failedMessageMeterName).register(MaxwellMetrics.prometheusRegistry);
+
 	public MaxwellKafkaProducerWorker(MaxwellContext context, Properties kafkaProperties, String kafkaTopic, ArrayBlockingQueue<RowMap> queue) {
 		super(context);
 
 		this.topic = kafkaTopic;
-		if ( this.topic == null ) {
+		if (this.topic == null) {
 			this.topic = "maxwell";
 		}
 
@@ -144,10 +167,10 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		String partitionColumns = context.getConfig().producerPartitionColumns;
 		String partitionFallback = context.getConfig().producerPartitionFallback;
 		this.partitioner = new MaxwellKafkaPartitioner(hash, partitionKey, partitionColumns, partitionFallback);
-		this.ddlPartitioner = new MaxwellKafkaPartitioner(hash, "database", null,"database");
-		this.ddlTopic =  context.getConfig().ddlKafkaTopic;
+		this.ddlPartitioner = new MaxwellKafkaPartitioner(hash, "database", null, "database");
+		this.ddlTopic = context.getConfig().ddlKafkaTopic;
 
-		if ( context.getConfig().kafkaKeyFormat.equals("hash") )
+		if (context.getConfig().kafkaKeyFormat.equals("hash"))
 			keyFormat = KeyFormat.HASH;
 		else
 			keyFormat = KeyFormat.ARRAY;
@@ -160,7 +183,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 	@Override
 	public void run() {
 		this.thread = Thread.currentThread();
-		while ( true ) {
+		while (true) {
 			try {
 				RowMap row = queue.take();
 				if (!taskState.isRunning()) {
@@ -168,7 +191,7 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 					return;
 				}
 				this.push(row);
-			} catch ( Exception e ) {
+			} catch (Exception e) {
 				taskState.stopped();
 				context.terminate(e);
 				return;
@@ -185,8 +208,8 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		}
 	}
 
-	private String generateTopic(String topic, RowMap r){
-		if ( interpolateTopic )
+	private String generateTopic(String topic, RowMap r) {
+		if (interpolateTopic)
 			return topic.replaceAll("%\\{database\\}", r.getDatabase()).replaceAll("%\\{table\\}", r.getTable());
 		else
 			return topic;
@@ -206,11 +229,12 @@ class MaxwellKafkaProducerWorker extends AbstractAsyncProducer implements Runnab
 		}
 
 		/* if debug logging isn't enabled, release the reference to `value`, which can ease memory pressure somewhat */
-		if ( !KafkaCallback.LOGGER.isDebugEnabled() )
+		if (!KafkaCallback.LOGGER.isDebugEnabled())
 			value = null;
 
 		KafkaCallback callback = new KafkaCallback(cc, r.getPosition(), key, value, this.metricsTimer,
-				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter, this.failedMessageMeter);
+				this.succeededMessageCount, this.failedMessageCount, this.succeededMessageMeter,
+				this.failedMessageMeter, this.succeededMessagePrometheusCount, this.failedPrometheusMessageCount);
 
 		kafka.send(record, callback);
 	}

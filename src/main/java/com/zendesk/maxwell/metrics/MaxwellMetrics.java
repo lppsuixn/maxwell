@@ -5,6 +5,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Slf4jReporter;
 import com.codahale.metrics.health.HealthCheckRegistry;
 import com.zendesk.maxwell.MaxwellConfig;
+import io.prometheus.client.CollectorRegistry;
 import org.apache.commons.lang.StringUtils;
 import org.coursera.metrics.datadog.DatadogReporter;
 import org.coursera.metrics.datadog.transport.HttpTransport;
@@ -22,11 +23,13 @@ import static org.coursera.metrics.datadog.DatadogReporter.Expansion.*;
 public class MaxwellMetrics {
 	public static final MetricRegistry metricRegistry = new MetricRegistry();
 	public static final HealthCheckRegistry healthCheckRegistry = new HealthCheckRegistry();
+	public static final CollectorRegistry prometheusRegistry = new CollectorRegistry();
 
 	public static final String reportingTypeSlf4j = "slf4j";
 	public static final String reportingTypeJmx = "jmx";
 	public static final String reportingTypeHttp = "http";
 	public static final String reportingTypeDataDog = "datadog";
+	public static final String reportingTypePrometheus = "prometheus";
 
 	static final Logger LOGGER = LoggerFactory.getLogger(MaxwellMetrics.class);
 
@@ -101,6 +104,14 @@ public class MaxwellMetrics {
 
 			reporter.start(config.metricsDatadogInterval, TimeUnit.SECONDS);
 			LOGGER.info("Datadog reporting enabled");
+		}
+
+		if (config.metricsReportingType.contains(reportingTypePrometheus)) {
+			healthCheckRegistry.register("MaxwellHealth", new MaxwellHealthCheck(metricRegistry));
+			LOGGER.info("Metrics http server starting");
+			new MaxwellHTTPServer(config.metricsHTTPPort, MaxwellMetrics.prometheusRegistry, healthCheckRegistry);
+			LOGGER.info("Metrics http server started on port " + config.metricsHTTPPort);
+
 		}
 	}
 

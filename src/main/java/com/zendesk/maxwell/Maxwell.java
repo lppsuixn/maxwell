@@ -67,14 +67,14 @@ public class Maxwell implements Runnable {
 		MysqlPositionStore positionStore = this.context.getPositionStore();
 		RecoveryInfo recoveryInfo = positionStore.getRecoveryInfo(config);
 
-		if ( recoveryInfo != null ) {
+		if (recoveryInfo != null) {
 			Recovery masterRecovery = new Recovery(
-				config.replicationMysql,
-				config.databaseName,
-				this.context.getReplicationConnectionPool(),
-				this.context.getCaseSensitivity(),
-				recoveryInfo,
-				this.config.shykoMode
+					config.replicationMysql,
+					config.databaseName,
+					this.context.getReplicationConnectionPool(),
+					this.context.getCaseSensitivity(),
+					recoveryInfo,
+					this.config.shykoMode
 			);
 
 			recovered = masterRecovery.recover();
@@ -83,14 +83,14 @@ public class Maxwell implements Runnable {
 				// load up the schema from the recovery position and chain it into the
 				// new server_id
 				MysqlSchemaStore oldServerSchemaStore = new MysqlSchemaStore(
-					context.getMaxwellConnectionPool(),
-					context.getReplicationConnectionPool(),
-					context.getSchemaConnectionPool(),
-					recoveryInfo.serverID,
-					recoveryInfo.position,
-					context.getCaseSensitivity(),
-					config.filter,
-					false
+						context.getMaxwellConnectionPool(),
+						context.getReplicationConnectionPool(),
+						context.getSchemaConnectionPool(),
+						recoveryInfo.serverID,
+						recoveryInfo.position,
+						context.getCaseSensitivity(),
+						config.filter,
+						false
 				);
 
 				oldServerSchemaStore.clone(context.getServerID(), recovered);
@@ -109,12 +109,12 @@ public class Maxwell implements Runnable {
 		}
 
 		/* second method: are we recovering from a master swap? */
-		if ( config.masterRecovery )
+		if (config.masterRecovery)
 			initial = attemptMasterRecovery();
 
 		/* third method: capture the current master position. */
-		if ( initial == null ) {
-			try ( Connection c = context.getReplicationConnection() ) {
+		if (initial == null) {
+			try (Connection c = context.getReplicationConnection()) {
 				initial = BinlogPosition.capture(c, config.gtidMode);
 			}
 		}
@@ -129,19 +129,22 @@ public class Maxwell implements Runnable {
 
 	public String getMaxwellVersion() {
 		String packageVersion = getClass().getPackage().getImplementationVersion();
-		if ( packageVersion == null )
+		if (packageVersion == null)
 			return "??";
 		else
 			return packageVersion;
 	}
 
 	static String bootString = "Maxwell v%s is booting (%s), starting at %s";
+
 	private void logBanner(AbstractProducer producer, BinlogPosition initialPosition) {
 		String producerName = producer.getClass().getSimpleName();
 		LOGGER.info(String.format(bootString, getMaxwellVersion(), producerName, initialPosition.toString()));
 	}
 
-	protected void onReplicatorStart() {}
+	protected void onReplicatorStart() {
+	}
+
 	private void start() throws Exception {
 		MaxwellMetrics.setup(config);
 		try {
@@ -152,8 +155,8 @@ public class Maxwell implements Runnable {
 	}
 
 	private void startInner() throws Exception {
-		try ( Connection connection = this.context.getReplicationConnection();
-		      Connection rawConnection = this.context.getRawMaxwellConnection() ) {
+		try (Connection connection = this.context.getReplicationConnection();
+			 Connection rawConnection = this.context.getRawMaxwellConnection()) {
 			MaxwellMysqlStatus.ensureReplicationMysqlState(connection);
 			MaxwellMysqlStatus.ensureMaxwellMysqlState(rawConnection);
 			if (config.gtidMode) {
@@ -162,7 +165,7 @@ public class Maxwell implements Runnable {
 
 			SchemaStoreSchema.ensureMaxwellSchema(rawConnection, this.config.databaseName);
 
-			try ( Connection schemaConnection = this.context.getMaxwellConnection() ) {
+			try (Connection schemaConnection = this.context.getMaxwellConnection()) {
 				SchemaStoreSchema.upgradeSchemaStoreSchema(schemaConnection);
 			}
 		}
@@ -177,7 +180,7 @@ public class Maxwell implements Runnable {
 		MysqlSchemaStore mysqlSchemaStore = new MysqlSchemaStore(this.context, initPosition);
 		mysqlSchemaStore.getSchema(); // trigger schema to load / capture before we start the replicator.
 
-		if ( this.config.shykoMode )
+		if (this.config.shykoMode)
 			this.replicator = new BinlogConnectorReplicator(mysqlSchemaStore, producer, bootstrapper, this.context, initPosition);
 		else
 			this.replicator = new MaxwellReplicator(mysqlSchemaStore, producer, bootstrapper, this.context, initPosition);
@@ -194,7 +197,7 @@ public class Maxwell implements Runnable {
 		// Since there are codepaths that create multiple replicators (at least in the tests) we need to protect
 		// against that.
 		String lagGaugeName = MetricRegistry.name(MaxwellMetrics.getMetricsPrefix(), "replication", "lag");
-		if ( !(MaxwellMetrics.metricRegistry.getGauges().containsKey(lagGaugeName)) ) {
+		if (!(MaxwellMetrics.metricRegistry.getGauges().containsKey(lagGaugeName))) {
 			MaxwellMetrics.metricRegistry.register(
 					lagGaugeName,
 					new Gauge<Long>() {
@@ -204,6 +207,10 @@ public class Maxwell implements Runnable {
 						}
 					}
 			);
+			io.prometheus.client.Gauge gauge = io.prometheus.client.Gauge.build(lagGaugeName.replaceAll("\\.", "_").replaceAll("\\s+", ""),
+					lagGaugeName.replaceAll("\\.", "_").replaceAll("\\s+", ""))
+					.register(MaxwellMetrics.prometheusRegistry);
+			gauge.set(replicator.getReplicationLag());
 		}
 
 		replicator.runLoop();
@@ -217,7 +224,7 @@ public class Maxwell implements Runnable {
 		try {
 			MaxwellConfig config = new MaxwellConfig(args);
 
-			if ( config.log_level != null )
+			if (config.log_level != null)
 				Logging.setLevel(config.log_level);
 
 			final Maxwell maxwell = new Maxwell(config);
@@ -231,12 +238,12 @@ public class Maxwell implements Runnable {
 			});
 
 			maxwell.start();
-		} catch ( SQLException e ) {
+		} catch (SQLException e) {
 			// catch SQLException explicitly because we likely don't care about the stacktrace
 			LOGGER.error("SQLException: " + e.getLocalizedMessage());
 			LOGGER.error(e.getLocalizedMessage());
 			System.exit(1);
-		} catch ( Exception e ) {
+		} catch (Exception e) {
 			e.printStackTrace();
 			System.exit(1);
 		}
